@@ -229,6 +229,9 @@ min'' :: AGE c att Int -> AGE c att Int -> AGE c att Int
 min'' = mkAGE [||min :: Int -> Int -> Int||]
 
 
+plus :: AGE c att Int -> AGE c att Int -> AGE c att Int
+plus = mkAGE [||(+) :: Int -> Int -> Int||]
+
 -------------
 -- Example --
 -------------
@@ -236,17 +239,23 @@ data Root = Root { tree :: Tree }
 data Tree = Node {l, r :: Tree} | Leaf {i :: Int}
 
 
-smin_leaf :: AGE At_Leaf a Int
+
 smin_leaf = val at_i 
-
-
-smin_node :: HasAtt a Tree Smin Int => AGE At_Node a Int
 smin_node = (smin # at_l) `min'` (smin # at_r)
-
-
 smin_def = syn (Proxy :: Proxy Tree) smin $ smin_leaf `SynCons` (smin_node `SynCons` SynNil)
 
-compilation = compileAG smin_def
+ssum_leaf = val at_i
+ssum_node = (smin # at_l) `plus` (smin # at_r)
+ssum_def = syn (Proxy :: Proxy Tree) ssum $ ssum_leaf `SynCons` (ssum_node `SynCons` SynNil)
+
+-- combine the two attributes
+combined = ssum_def <+> smin_def
+
+-- compile the resulting AG (not for real, yet)
+compilation = compileAG combined
+
+-- The following does not work since @ssum_def@ is incomplete
+compilationFail = compileAG ssum_def
 
 {- output for "printAG smin_def":
 
@@ -296,6 +305,12 @@ data Smin
 
 smin :: Attr Smin Int
 smin = Attr "smin" (ConT ''Int)
+
+data Ssum
+
+ssum :: Attr Ssum Int
+ssum = Attr "ssum" (ConT ''Int)
+
 
 data Sres
 
