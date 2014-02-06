@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell, MultiParamTypeClasses, FlexibleContexts,
 NoMonomorphismRestriction, FlexibleInstances, FunctionalDependencies,
 GADTs, TypeOperators, DataKinds, KindSignatures, PolyKinds, TypeFamilies, UndecidableInstances, 
-AllowAmbiguousTypes, OverlappingInstances #-}
+AllowAmbiguousTypes, OverlappingInstances, ScopedTypeVariables #-}
 
 import Language.Haskell.TH
 
@@ -161,17 +161,56 @@ infixl <>
 
 
 
-mkAGE :: Q (TExp a) -> AGE c att a
-mkAGE q = AGE $ StateT $ \ env -> liftM (\e -> (unType e, env)) q
+mkAGESimple :: Q (TExp a) -> AGE c att a
+mkAGESimple q = AGE $ StateT $ \ env -> liftM (\e -> (unType e, env)) q
 
 
-min' :: Ord b =>
-        AGE c a b
-     -> AGE c a b
-     -> AGE c a b
-min' x y = mkAGE [||min||] <> x <> y
+data Nat = Zero | Succ Nat
 
 
+type family MkAGE (n :: Nat) c att a where
+    MkAGE Zero c att a = AGE c att a
+    MkAGE (Succ n) c att (a -> b) = AGE c att a -> MkAGE n c att b
+
+data NumArgs :: Nat -> * -> * where
+    NAZero :: NumArgs Zero a 
+    NASucc :: NumArgs n b -> NumArgs (Succ n) (a -> b)
+
+mkAGE_ :: NumArgs n a -> AGE c att a -> MkAGE n c att a
+mkAGE_ NAZero q = q
+mkAGE_ (NASucc n) q = \ x -> mkAGE_ n (q <> x)
+
+type family CountArgs (f :: *) :: Nat where 
+    CountArgs (a -> b) = Succ (CountArgs b)
+    CountArgs result = Zero
+
+class CNumArgs (numArgs :: Nat) (a :: *) where 
+    getNA :: NumArgs numArgs a
+instance CNumArgs Zero a where
+    getNA = NAZero
+instance CNumArgs n b => CNumArgs (Succ n) (a -> b) where
+    getNA = NASucc getNA
+
+
+mkAGE :: forall a c att . CNumArgs (CountArgs a) a => Q (TExp a) -> MkAGE (CountArgs a) c att a
+mkAGE q = mkAGE_ (getNA :: NumArgs (CountArgs a) a) (mkAGESimple q :: AGE c att a)
+
+mkAGE' :: forall n a c att . NumArgs n a -> Q (TExp a) -> MkAGE n c att a
+mkAGE' n q = mkAGE_ n (mkAGESimple q :: AGE c att a)
+
+-- example use of mkAGE
+
+
+-- Since @min@ is polymorphic (in its result type) we have to use
+-- 'mkAGE'' and give the number of arguments explicitly.
+min' :: Ord b => AGE c att b -> AGE c att b -> AGE c att b
+min' = mkAGE' (NASucc (NASucc NAZero)) [||min||]
+
+-- If we use a monomorphic type, then 'mkAGE' can deduce the number of
+-- arguments.
+
+min'' :: AGE c att Int -> AGE c att Int -> AGE c att Int
+min'' = mkAGE [||min :: Int -> Int -> Int||]
 
 
 -------------
