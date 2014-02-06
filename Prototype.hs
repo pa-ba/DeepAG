@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell, MultiParamTypeClasses, FlexibleContexts,
 NoMonomorphismRestriction, FlexibleInstances, FunctionalDependencies,
 GADTs, TypeOperators, DataKinds, KindSignatures, PolyKinds, TypeFamilies, UndecidableInstances, 
-AllowAmbiguousTypes, OverlappingInstances, ScopedTypeVariables #-}
+AllowAmbiguousTypes, OverlappingInstances, ScopedTypeVariables, StandaloneDeriving #-}
 
 import Language.Haskell.TH
 
@@ -11,7 +11,7 @@ import Control.Monad.State
 import Data.Map (Map)
 import qualified Data.Map as Map
 
-
+import System.IO.Unsafe -- for pretty printing
 
 
 type AttrName = String
@@ -58,6 +58,12 @@ data AG dep def where
     AGSyn :: (HasProds n ps (CmpProds n ps)) =>
               Proxy n -> Attr a t -> Syn ps as t -> AG as def -> AG as (AttrAt n a t ': def)
 
+deriving instance Show (AG dep def)
+deriving instance Show (Attr a t)
+deriving instance Show (Syn ps dep t)
+deriving instance Show (Proxy n)
+
+
 -- | Define a synthesised attribute
 syn :: (HasProds n ps (CmpProds n ps)) => Proxy n -> Attr a t -> 
        Syn ps as t -> AG as '[AttrAt n a t]
@@ -82,6 +88,9 @@ type family HasDupl (x :: k) (xs :: [k]) (cont :: [k]) where
 compileAG :: (Duplicate atts ~ '[]) => AG atts atts -> Q [Dec]
 compileAG _ = return []
 
+
+printAG :: (Duplicate atts ~ '[]) => AG atts atts -> String
+printAG = show
 
 -- | as has an attribute a of type t on a node of type n.
 class HasAtt as n a t 
@@ -136,12 +145,12 @@ root = AGE $ StateT $ \env ->
                        return (VarE n, env {envRootVal = Just n})
 
 data Pos = AtChild ChildName | AtRoot
-         deriving (Eq, Ord)
+         deriving (Eq, Ord, Show)
 
 data Env = Env {envAttrs :: Map AttrName (Map Pos Name, Type)
                ,envVals :: Map ChildName (Name, Type)
                ,envRootVal :: Maybe Name}
-
+         deriving Show
 
 -- | Attribute grammar expression (i.e. the right-hand side of a AG
 -- rule). t is the type of the root node for which the expression is
@@ -150,6 +159,13 @@ data Env = Env {envAttrs :: Map AttrName (Map Pos Name, Type)
 -- (run-time) type of the expression.
 
 newtype AGE c att a = AGE {unAGE :: StateT Env Q Exp}
+
+instance Show (AGE c att a) where
+    show (AGE (StateT t)) = unsafePerformIO $ runQ $ 
+                            do (ex, env) <- t (Env Map.empty Map.empty Nothing)
+                               return (show env ++"\n" ++ show ex)
+
+
 
 infixl <>
 
@@ -231,6 +247,21 @@ smin_node = (smin # at_l) `min'` (smin # at_r)
 smin_def = syn (Proxy :: Proxy Tree) smin $ smin_leaf `SynCons` (smin_node `SynCons` SynNil)
 
 compilation = compileAG smin_def
+
+{- output for "printAG smin_def":
+
+AGSyn Proxy (Attr {attrName = "smin", attrType = ConT GHC.Types.Int})
+          (SynCons Env {envAttrs = fromList [], 
+                        envVals = fromList [(Main.i,(val_6,ConT GHC.Types.Int))], 
+                        envRootVal = Nothing}
+           VarE val_6 
+           (SynCons Env {envAttrs = fromList [("smin",(fromList [(AtChild Main.l,smin_7),
+                                                                 (AtChild Main.r,smin_8)],
+                                                       ConT GHC.Types.Int))],
+                         envVals = fromList [], 
+                         envRootVal = Nothing }
+            AppE (AppE (VarE GHC.Classes.min) (VarE smin_7)) (VarE smin_8) SynNil)) AGNil
+-}
 
 ------------------------------------------------------------------
 -- The stuff below is boilerplate that should be generated using
